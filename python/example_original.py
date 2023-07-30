@@ -10,17 +10,17 @@ import matplotlib.pyplot as plt
 plt.rcParams['figure.figsize'] = (13, 8)
 plt.rcParams['image.cmap'] = 'viridis'
 
-from scipy.special import gamma
-
-import pickle
-
 # %% Function definitions
 
 # Initialize Fourier kernel
 def initialize_kernel(n1, n2):
     xx, yy = np.meshgrid(np.linspace(0,np.pi,n1,False), np.linspace(0,np.pi,n2,False))
-    kernel = 2*np.pi* (xx**2 + yy**2)  #2*n1*n1*(1-np.cos(xx)) + 2*n2*n2*(1-np.cos(yy))
-    kernel[0,0] = 1     # to avoid dividing by zero
+#    kernel = 2*n1*n1*(1-np.cos(xx)) + 2*n2*n2*(1-np.cos(yy))
+    kernel = (xx**2 + yy**2)  #2*n1*n1*(1-np.cos(xx)) + 2*n2*n2*(1-np.cos(yy))      (2*np.pi)**2 * 
+    kernel = (xx**2 / (np.sin(2*np.pi* xx)**2 +0.001)) + (yy**2 / (np.sin(2*np.pi*yy)**2+0.001))
+#    kernel[np.abs(kernel)<0.01] = 0.01     # to avoid dividing by zero
+
+    kernel[0,0] = 1
     return kernel
 
 # 2d DCT
@@ -31,59 +31,20 @@ def dct2(a):
 def idct2(a):
     return idctn(a, norm='ortho')
 
-
-#### Fundamental solution of Laplacian for d=2
-##def fund_sol(y):
-###    return np.linalg.norm(x) * (1.0 / (   
-##    return np.log(np.linalg.norm(y)) / (2 * np.pi)
-##
-#### inverse Laplacian on torus.
-##def inv_laplace(f):
-##    n1, n2 = f.shape
-##
-##    grid = np.linspace(-10,10,10000)
-##
-##    out = np.empty((n1,n2))
-##
-##    for i in range(n1):
-##        for j in range(n2):
-##            out[i,j] = np.sum( fund_sol(grid[k])
-
-
 # Update phi as 
 #       ϕ ← ϕ + σ Δ⁻¹(ρ − ν)
 # and return the error 
 #       ∫(−Δ)⁻¹(ρ−ν) (ρ−ν)
 # Modifies phi and rho
-
-def b_to_k(phi):
-    phi = 0.5*(x*x+y*y) - phi
-    return None
-
 def update_potential(phi, rho, nu, kernel, sigma):
     n1, n2 = nu.shape
 
     rho -= nu
-    print(rho)
-    workspace = np.fft.fft2(rho) 
-    omega_x = np.fft.fftfreq(workspace[0].shape[0],d=dx)
-    omega_y = np.fft.fftfreq(workspace[1].shape[0],d=dy)
-
-    for i in range(n1):
-        for j in range(n2):
-            if omega_x[i] == 0 and omega_y[j] == 0:
-                workspace[i,j] = 0
-
-            else:                
-                workspace[i,j] /= (omega_x[i]**2 + omega_y[j]**2)
-
-#    workspace[0,0] = 0
-#    workspace
-    iphi = np.real( np.fft.ifft2(workspace,axes=[0,1]))
-    #workspace = idct2(workspace)
-    print(iphi)
-    #phi += sigma * (0.5*(x*x+y*y) - iphi)
-    phi += sigma * iphi
+    workspace = dct2(rho) / kernel
+    workspace[0,0] = 0
+    workspace = idct2(workspace)
+    
+    phi = sigma * workspace #(0.5*(x*x+y*y) - workspace)
     h1 = np.sum(workspace * rho) / (n1*n2)
     
     return h1
@@ -111,8 +72,6 @@ def stepsize_update(sigma, value, oldValue, gradSq):
         return sigma * scaleDown
     return sigma
 
-#def max_per(phi,psi):
-
 
 # Back-and-forth solver
 def compute_ot(phi, psi, bf, sigma):
@@ -123,44 +82,22 @@ def compute_ot(phi, psi, bf, sigma):
     oldValue = compute_w2(phi, psi, mu, nu, x, y)
 
     for k in range(numIters+1):
-
-        print(phi)
+          
         gradSq = update_potential(phi, rho, nu, kernel, sigma)
-        print("!!!")
-        print(phi)
-        b_to_k(phi)
-        b_to_k(psi)
 
-
-        print(phi)
-        #p_phi,p_psi = max_per(phi,psi)
         bf.ctransform(psi, phi)
-
-        #p_phi,p_psi = max_per(phi,psi)
         bf.ctransform(phi, psi)
-    
-        print(phi)
 
         value = compute_w2(phi, psi, mu, nu, x, y)
-
         sigma = stepsize_update(sigma, value, oldValue, gradSq)
         oldValue = value
 
         bf.pushforward(rho, phi, nu)
 
-        b_to_k(phi)
-        b_to_k(psi)
-
         gradSq = update_potential(psi, rho, mu, kernel, sigma)
 
-        b_to_k(phi)
-        b_to_k(psi)
-
-        #p_phi,p_psi = max_per(phi,psi)
-        bf.ctransform(psi, phi)
-
-        #p_phi,p_psi = max_per(phi,psi)
         bf.ctransform(phi, psi)
+        bf.ctransform(psi, phi)
 
         bf.pushforward(rho, psi, mu)
 
@@ -171,9 +108,6 @@ def compute_ot(phi, psi, bf, sigma):
         if k % 5 == 0:
             print(f'iter {k:4d},   W2 value: {value:.6e},   H1 err: {gradSq:.2e}')
 
-        b_to_k(phi)
-        b_to_k(psi)
-
 # %% Example: Caffarelli's counterexample
 
 # Caffarelli's counterexample illustrates that the optimal map can be discontinous when the target domain is nonconvex.
@@ -183,37 +117,15 @@ def compute_ot(phi, psi, bf, sigma):
 # Define the problem data and initial values
 
 # Grid of size n1 x n2
-n1 = 128# 1024   # x axis
-n2 = 128#1024   # y axis
+n1 = 1024   # x axis
+n2 = 1024   # y axis
 
-dx = 1/(n1-1)
-dy = 1/(n2-1)
+x, y = np.meshgrid(np.linspace(0.5/n1,1-0.5/n1,n1), np.linspace(0.5/n2,1-0.5/n1,n2))
 
-#x, y = np.meshgrid(np.linspace(0.5/n1,1-0.5/n1,n1), np.linspace(0.5/n2,1-0.5/n1,n2))
-x, y = np.meshgrid(np.linspace(0,1,n1), np.linspace(0,1,n2))
-phi = np.zeros((n1,n2)) #0.5 * (x*x + y*y)
-psi = np.zeros((n1,n2))#0.5 * (x*x + y*y)
+phi = 0.5 * (x*x + y*y)
+psi = 0.5 * (x*x + y*y)
 
 
-#np.set_printoptions(formatter={'float': lambda x: "{0:0.2f}".format(x)})
-#
-#print(x)
-#print(np.roll(x,shift=-n1//2, axis=[0,1]))
-#print("\n\n")
-#print(y)
-#print(np.roll(y,shift=-n1//2, axis=[1,0]))
-#print(np.roll(y,shift=n1//2, axis=[0,1]))
-#
-#
-#
-#
-#sys.exit(0)
-#
-#rolls_x = [x, np.roll(x,shift=-n1//2, axis=0)]
-#rolls_y = [y]
-#
-##roll1 = 
-#
 
 
 # Initialize densities
@@ -267,6 +179,7 @@ print(f'\nElapsed time: {toc-tic:.2f}s')
 
 
 
+
 # %% Visualizations
 
 
@@ -275,7 +188,7 @@ my, mx = ma.masked_array(np.gradient(psi-0.5*(x*x+y*y), 1/n2, 1/n1), mask=((mu==
 fig, ax = plt.subplots()
 ax.contourf(x, y, mu+nu)
 ax.set_aspect('equal')
-skip = (slice(None,None,n1//16), slice(None,None,n2//16))
+skip = (slice(None,None,n1//50), slice(None,None,n2//50))
 ax.quiver(x[skip], y[skip], mx[skip], my[skip], color='yellow', angles='xy', scale_units='xy', scale=1);
 
 # %% 
